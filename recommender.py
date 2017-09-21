@@ -2,11 +2,14 @@ import numpy as np
 from scipy import sparse
 import operator
 from sklearn.metrics import mean_squared_error
+import datetime as dt
+import random
 
 class Recommender:
     
-    def __init__(self, ratings, kind):
+    def __init__(self, ratings, kind, ratings_weighted=None):
         self.ratings = ratings
+        self.ratings_weighted = ratings_weighted
         self.kind = kind
         self.nusers = ratings.shape[0]
         self.nitems = ratings.shape[1]
@@ -55,6 +58,7 @@ class Recommender:
                     if( self.ratings[u][i] != 0 ):
                         upred += self.ratings[u][i] * np.array(self.similarity[i,:])[0]
                 self.user_predictions[u] = upred
+
         print('done!')
 
 
@@ -75,6 +79,38 @@ class Recommender:
             user_recommendations.remove(i)
         
         return user_recommendations
+
+    def get_sim_items(self, item):
+
+        if self.kind != 'item':
+            print('Item similarity matrix not available!')
+            return
+
+        item_dict = {}
+        for i in range(self.nitems):
+            item_dict[i] = self.similarity[item,i]
+
+        # sort in order of decreasing similarity
+        items_sorted = sorted(item_dict.items(), key=operator.itemgetter(1), reverse=True)
+
+        return [x[0] for x in items_sorted]
+
+
+def timeweight(x, today):
+    timescale_days = 15
+
+    if( (today - x).days < timescale_days ):
+        return 2
+    else:
+        return 1
+
+def ratings_timeweighted(ratings_df):
+    today = dt.date.today()
+    ratings_df_weights = ratings_df.applymap(lambda x: timeweight(x, today))
+
+    return np.array(ratings_df_weights)
+
+
 
 def train_test_split(ratings, nfolds, iteration):
 
@@ -97,24 +133,89 @@ def get_mse(pred, actual):
     actual = actual[actual.nonzero()].flatten()
     return mean_squared_error(pred, actual)
 
+def get_roc(pred, actual):
+
+    # enforce recommendation list with n=10 items
+    N = 10
+
+    for u in range(len(pred)):
+        # indices of top N elements
+        ind = sorted(range(len(pred[u])), key=lambda i: pred[u][i])[-N:]
+
+        # set these indices to unity, else to zero
+        for i in range(len(pred[u])):
+            pred[u][i] = 0
+        for i in ind:
+            pred[u][i] = 1
+
+    pred = pred.flatten()
+    actual = actual.flatten()
+
+    tp = 0.0
+    fp = 0.0
+    tn = 0.0
+    fn = 0.0
+    print('calculating roc')
+    for i in range(len(pred)):
+        if( pred[i] == 0 ):
+            if( actual[i] == 1 ):
+                fn += 1.0
+            else:
+                tn += 1.0
+        elif( pred[i] == 1):
+            if( actual[i] == 1 ):
+                tp += 1.0
+            else:
+                fp += 1.0
+    
+    tpr = tp / (tp + fn)
+    fpr = fp / (fp + tn)
+
+    return tpr, fpr
+
+
 def run_validation(ratings, kind, nfolds):
     print('Running validation...')
 
-    mse_sum = 0
+    tpr_avg = 0
+    fpr_avg = 0
     for fold in range(nfolds):
         print('... fold', fold+1, '/', nfolds)
 
         train, test = train_test_split(ratings, nfolds, fold)
-        rec = Recommender(train, kind)
-        rec.get_similarity()
-        rec.get_predictions()
+        if( kind == 'popular' ):
+            preds = np.zeros(train.shape)
+            sums = np.sum(train, axis=0)
 
-        preds = rec.user_predictions # fix this?
-        nans = np.isnan(preds)
-        preds[nans] = 0
+            # indices of top 10 elements
+            ind = sorted(range(len(sums)), key=lambda i: sums[i])[-10:]
 
-        mse_sum += get_mse(preds, test)
+            preds[:, ind] = 1
 
-    mse_sum /= nfolds
-    print('MSE:', mse_sum)
-    return mse_sum
+        elif( kind == 'random' ):
+            max_item = train.shape[1]
+            preds = np.zeros(train.shape)
+            for u in range(len(preds)):
+                preds[u][np.random.randint(low=0,high=max_item,size=10).tolist()] = 1
+
+        else:
+            rec = Recommender(train, kind)
+            rec.get_similarity()
+            rec.get_predictions()
+
+            preds = rec.user_predictions # fix this?
+            nans = np.isnan(preds)
+            preds[nans] = 0
+
+        tpr, fpr = get_roc(preds, test)
+        tpr_avg += tpr
+        fpr_avg += fpr
+
+        #mse_sum += get_mse(preds, test)
+
+    tpr_avg /= nfolds
+    fpr_avg /= nfolds
+    #mse_sum /= nfolds
+    print('Mean true positive rate:', tpr_avg)
+    print('Mean false positive rate:', fpr_avg)
+    return tpr_avg, fpr_avg
