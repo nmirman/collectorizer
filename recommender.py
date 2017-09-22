@@ -127,16 +127,10 @@ def train_test_split(ratings, nfolds, iteration):
     assert(np.all((train * test) == 0)) 
     return train, test
 
-def get_mse(pred, actual):
-    # ignore nonzero terms.
-    pred = pred[actual.nonzero()].flatten()
-    actual = actual[actual.nonzero()].flatten()
-    return mean_squared_error(pred, actual)
+def get_roc(pred, actual, nrecitems):
 
-def get_roc(pred, actual):
-
-    # enforce recommendation list with n=10 items
-    N = 10
+    # enforce recommendation list with N items
+    N = nrecitems
 
     for u in range(len(pred)):
         # indices of top N elements
@@ -155,7 +149,7 @@ def get_roc(pred, actual):
     fp = 0.0
     tn = 0.0
     fn = 0.0
-    print('calculating roc')
+    print('calculating roc...')
     for i in range(len(pred)):
         if( pred[i] == 0 ):
             if( actual[i] == 1 ):
@@ -168,17 +162,16 @@ def get_roc(pred, actual):
             else:
                 fp += 1.0
     
-    tpr = tp / (tp + fn)
-    fpr = fp / (fp + tn)
-
-    return tpr, fpr
+    return tp, fp, tn, fn
 
 
-def run_validation(ratings, kind, nfolds):
-    print('Running validation...')
+def run_validation(ratings, kind, nfolds, nrecitems=10):
+    print('Running validation with N =', nrecitems, '...')
 
-    tpr_avg = 0
-    fpr_avg = 0
+    tp_sum = 0
+    fp_sum = 0
+    tn_sum = 0
+    fn_sum = 0
     for fold in range(nfolds):
         print('... fold', fold+1, '/', nfolds)
 
@@ -187,8 +180,8 @@ def run_validation(ratings, kind, nfolds):
             preds = np.zeros(train.shape)
             sums = np.sum(train, axis=0)
 
-            # indices of top 10 elements
-            ind = sorted(range(len(sums)), key=lambda i: sums[i])[-10:]
+            # indices of top elements
+            ind = sorted(range(len(sums)), key=lambda i: sums[i])[-nrecitems:]
 
             preds[:, ind] = 1
 
@@ -196,7 +189,7 @@ def run_validation(ratings, kind, nfolds):
             max_item = train.shape[1]
             preds = np.zeros(train.shape)
             for u in range(len(preds)):
-                preds[u][np.random.randint(low=0,high=max_item,size=10).tolist()] = 1
+                preds[u][np.random.randint(low=0,high=max_item,size=nrecitems).tolist()] = 1
 
         else:
             rec = Recommender(train, kind)
@@ -207,15 +200,15 @@ def run_validation(ratings, kind, nfolds):
             nans = np.isnan(preds)
             preds[nans] = 0
 
-        tpr, fpr = get_roc(preds, test)
-        tpr_avg += tpr
-        fpr_avg += fpr
+        tp, fp, tn, fn = get_roc(preds, test, nrecitems)
+        tp_sum += tp
+        fp_sum += fp
+        tn_sum += tn
+        fn_sum += fn
 
-        #mse_sum += get_mse(preds, test)
+    print('TP, FP, TN, FN = ', tp_sum, fp_sum, tn_sum, fn_sum)
+    print('Precision:', tp_sum/(tp_sum+fp_sum) )
+    print('True positive rate:', tp_sum/(tp_sum+fn_sum) )
+    print('False positive rate:', fp_sum/(fp_sum+tn_sum) )
 
-    tpr_avg /= nfolds
-    fpr_avg /= nfolds
-    #mse_sum /= nfolds
-    print('Mean true positive rate:', tpr_avg)
-    print('Mean false positive rate:', fpr_avg)
-    return tpr_avg, fpr_avg
+    return tp_sum, fp_sum, tn_sum, fn_sum
