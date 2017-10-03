@@ -7,11 +7,8 @@ import random
 
 class Recommender:
     
-    def __init__(self, ratings, kind, ratings_weighted=None, user_stats=None, item_stats=None):
+    def __init__(self, ratings, kind):
         self.ratings = ratings
-        self.ratings_weighted = ratings_weighted
-        self.user_stats = user_stats
-        self.item_stats = item_stats
         self.kind = kind
         self.nusers = ratings.shape[0]
         self.nitems = ratings.shape[1]
@@ -19,6 +16,13 @@ class Recommender:
         self.user_predictions = np.zeros((self.nusers, self.nitems))
 
     def get_similarity(self):
+        """
+        Get the user-to-user or item-to-item similarity matrix,
+        using the ratings matrix and similarity type as input.
+
+        :param self: instance of the Recommender class
+        :returns: void
+        """
         print('Calculating', self.kind, 'based similarity matrix...')
 
         # to avoid divide by zero
@@ -41,6 +45,13 @@ class Recommender:
 
 
     def get_predictions(self):
+        """
+        Get the probability that a user will be interested
+        in some item.
+
+        :param self: instance of the Recommender class
+        :returns: void
+        """
         print('Getting user predictions...')
 
         if self.kind == 'user':
@@ -51,43 +62,26 @@ class Recommender:
             self.user_predictions = self.ratings.dot(self.similarity)\
                     / np.array([np.abs(self.similarity).sum(axis=1)])
 
-        elif self.kind == 'itemalt':
-            for u in range(self.nusers):
-                if( u%1000 == 0 ):
-                    print('... user', u)
-                upred = np.zeros(self.nitems)
-                for i in range(self.nitems):
-                    if( self.ratings[u][i] != 0 ):
-                        upred += self.ratings[u][i] * np.array(self.similarity[i,:])[0]
-                self.user_predictions[u] = upred
-
         print('done!')
 
-    def get_priceweight(self, user, item, k=1):
+    def get_user_recs(self, user):
+        """
+        Get a ranked list of recommendations for a specific user.
+        The ranking is done with high recommendation relevance corresponding to low indices.
 
-        pfrac =  float(self.item_stats[item, 'pricerangelow']) / self.user_stats.loc[user, 'price_max']
-
-        if pfrac == None or (pfrac < 1):
-            weight = 1
-        else:
-            weight = math.exp( -k*pfrac )
-
-        return weight
-
-
-    def get_user_recs(self, user, pweight=-1):
-
+        :param self: instance of the Recommender class
+        :param user: the user number corresponding to a row of the ratings matrix
+        :returns: ranked list of item numbers corresponding to columns of the ratings matrix
+        """
         rec_dict = {}
         for i in range(self.nitems):
             rec_dict[i] = self.user_predictions[user,i]
-            if pweight != -1:
-                rec_dict[i] *= self.get_priceweight(user, i, pweight)
 
         # sort the list in order of decreasing predicted ratings
         recs_sorted = sorted(rec_dict.items(), key=operator.itemgetter(1), reverse=True)
 
         # get recommendations
-        # excluding items already covered
+        # excluding items already selected
         user_recommendations = [x[0] for x in recs_sorted]
         user_items = np.nonzero(self.ratings[user])
         for i in user_items[0]:
@@ -96,7 +90,15 @@ class Recommender:
         return user_recommendations
 
     def get_sim_items(self, item):
+        """
+        Get a ranked list of similar items using the collaborative filtering technique.
+        This method requires the similarity type to be item-to-item.
+        The ranking is done with high similarity corresponding to low indices.
 
+        :param self: instance of the Recommender class
+        :param item: item number corresponding to a column of the ratings matrix
+        :returns: ranked list of item numbers corresponding to columns of the ratings matrix
+        """
         if self.kind != 'item':
             print('Item similarity matrix not available!')
             return
@@ -111,24 +113,18 @@ class Recommender:
         return [x[0] for x in items_sorted]
 
 
-def timeweight(x, today):
-    timescale_days = 15
-
-    if( (today - x).days < timescale_days ):
-        return 2
-    else:
-        return 1
-
-def ratings_timeweighted(ratings_df):
-    today = dt.date.today()
-    ratings_df_weights = ratings_df.applymap(lambda x: timeweight(x, today))
-
-    return np.array(ratings_df_weights)
-
-
 
 def train_test_split(ratings, nfolds, iteration):
+    """
+    Split the ratings matrix into disjoint training and test sets.
+    The sets are disjoint with respect to the nonzero entries of the ratings matrix.
+    Every nth nonzero entry is set to zero in the training matrix and set to a nonzero value in the test matrix.
 
+    :param ratings: ratings matrix
+    :param nfolds: the total number of cross validation folds
+    :param iteration: the fold number used for this split
+    :returns: disjoint matrices train and test with the same dimensions as the ratings matrix
+    """
     test = np.zeros(ratings.shape)
     train = ratings.copy()
 
@@ -143,8 +139,16 @@ def train_test_split(ratings, nfolds, iteration):
     return train, test
 
 def get_roc(pred, actual, nrecitems):
+    """
+    Get the standard validation metrics, given a set of predictions and the ground truth.
 
-    # enforce recommendation list with N items
+    :param pred: Matrix containing item predictions for each user.  If corresponding to an N-item list of recommendations, this matrix will have N elements set to unity for each user, with zeros elsewhere.
+    :param actual: Matrix containing the ground truth for each user.
+    :param nrecitems: Number of recommendations in list.
+    :returns: validation metrics.  True positives, false positives, true negatives, false negatives, precision, and recall.
+    """
+
+    # recommendation list with N items
     N = nrecitems
 
     for u in range(len(pred)):
@@ -152,13 +156,11 @@ def get_roc(pred, actual, nrecitems):
         ind = sorted(range(len(pred[u])), key=lambda i: pred[u][i])[-N:]
 
         # set these indices to unity, else to zero
+        # (this is redundant with the run_validation method)
         for i in range(len(pred[u])):
             pred[u][i] = 0
         for i in ind:
             pred[u][i] = 1
-
-    #pred = pred.flatten()
-    #actual = actual.flatten()
 
     tp = 0.0
     fp = 0.0
@@ -167,7 +169,6 @@ def get_roc(pred, actual, nrecitems):
     precision = 0.0
     recall = 0.0
     print('calculating roc...')
-    #for i in range(len(pred)):
     for i in range(pred.shape[0]):
 
         tpu = 0
@@ -199,7 +200,17 @@ def get_roc(pred, actual, nrecitems):
     return tp, fp, tn, fn, precision/pred.shape[0], recall/pred.shape[0]
 
 
-def run_validation(ratings, kind, nfolds, nrecitems=10):
+def run_validation(ratings, kind, nfolds, nrecitems=10, onefold=False):
+    """
+    Validate the recommender system by holding out wishlist and collection entries.
+
+    :param ratings: the ratings matrix
+    :param kind: type of recommendations (user-to-user, item-to-item, popular items, random items)
+    :param nfolds: number of divisions of the wishlist/collection entries
+    :param nrecitems: number of items recommended per user
+    :param onefold: run a quicker validation with one holdout set instead of k-fold cross validation
+    :returns: validation metrics (true positives, false positives, true negatives, false negatives, precision, recall)
+    """
     print('Running validation with N =', nrecitems, '...')
 
     tp_sum = 0
@@ -249,7 +260,10 @@ def run_validation(ratings, kind, nfolds, nrecitems=10):
         precision_sum += precision
         recall_sum += recall
 
-        break
+        # run quicker validation
+        # with one holdout set
+        if onefold == True:
+            break
 
     print('TP, FP, TN, FN = ', tp_sum, fp_sum, tn_sum, fn_sum)
     print('Precision:', tp_sum/(tp_sum+fp_sum) )
