@@ -1,6 +1,6 @@
 # Collectorizer
 
-Collectorizer is a recommender system for collectors.  It was developed as a consulting project for [Covetly](https://www.covetlyapp.com), a startup mobile-app marketplace for buying and selling collectibles.
+Collectorizer is a recommender system for collectors.  It was developed as a consulting project for [Covetly](https://www.covetlyapp.com), a startup mobile-app marketplace for buying and selling collectibles.  Collectorizer has been deployed as a web application at [collectorizer.nathanmirman.com](http://collectorizer.nathanmirman.com).
 
 Users of the Covetly app specify a collection of items they already own, and a wishlist of items that they may be interested in.  Collectorizer utilizes this information to generate personalized recommendations for each user.
 
